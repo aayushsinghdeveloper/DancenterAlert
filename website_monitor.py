@@ -77,6 +77,7 @@ def check_website_loop():
 def home():
     return "Website monitor is running."
 
+
 if __name__ == "__main__":
     # Start the background thread for checking the website
     threading.Thread(target=check_website_loop, daemon=True).start()
