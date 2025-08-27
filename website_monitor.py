@@ -10,6 +10,15 @@ app = Flask(__name__)
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL") or "YOUR_TEAMS_WEBHOOK_URL"
 URL = "https://www.dancenter.com/"
 
+# Headers to mimic a browser
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+}
+
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_DELAY = 5  # seconds
+
 def send_teams_alert(message):
     payload = {
         "type": "message",
@@ -45,19 +54,24 @@ def send_teams_alert(message):
 
 def check_website_loop():
     while True:
-        try:
-            response = requests.get(URL, timeout=15)
-            if response.status_code == 200:
-                message = f"✅ {URL} is up and running. Status code: {response.status_code}"
-            else:
-                message = f"⚠️ {URL} returned status {response.status_code}. Please check immediately!"
-        except Exception as e:
-            message = f"🚨 {URL} is NOT reachable.\nError: {str(e)}"
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = requests.get(URL, headers=HEADERS, timeout=15)
+                if response.status_code == 200:
+                    message = f"✅ {URL} is up and running. Status code: {response.status_code}"
+                else:
+                    message = f"⚠️ {URL} returned status {response.status_code}. Please check immediately!"
+                send_teams_alert(message)
+                break  # Success, no need to retry
+            except requests.RequestException as e:
+                print(f"Attempt {attempt} failed: {e}")
+                if attempt == MAX_RETRIES:
+                    message = f"🚨 {URL} is NOT reachable after {MAX_RETRIES} attempts.\nError: {e}"
+                    send_teams_alert(message)
+                else:
+                    time.sleep(RETRY_DELAY)  # wait before retrying
 
-        # Send alert every time
-        send_teams_alert(message)
-
-        time.sleep(1800)  # wait 30 minutes before next check
+        time.sleep(1800)  # check every 30 minutes
 
 @app.route("/")
 def home():
