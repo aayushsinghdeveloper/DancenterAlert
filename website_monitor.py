@@ -1,28 +1,34 @@
-import requests
+import os
 import time
+import threading
+import requests
 import json
+from flask import Flask
 from requests.exceptions import ProxyError, ConnectionError, SSLError
 
-# 🔗 Your Teams webhook URL
-WEBHOOK_URL = "https://oyoenterprise.webhook.office.com/webhookb2/78fc0508-3816-4c6d-9ce3-f78d86d9acb7@04ec3963-dddc-45fb-afb7-85fa38e19b99/IncomingWebhook/3ef025a0f8b84c68b5b0e04b72430eab/e953c7f3-954d-4b3e-97b0-70880660db5f/V2Fapz2yPQJvpyx_I7XQgu7Z3-08j2i60FxLrH4nkS3Aw1"
+# 🔗 Teams Webhook URL from Railway env var
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-# 🌐 The site you want to monitor
+# 🌐 Website to monitor
 URL = "https://www.dancenter.com/"
 
-# Retry logic
+# Configs
 MAX_RETRIES = 3
-RETRY_DELAY = 5  # seconds
+RETRY_DELAY = 5  # seconds between retries
 CHECK_INTERVAL = 1800  # 30 minutes
 
 
 def send_teams_alert(message):
-    """Send a formatted alert to Microsoft Teams via webhook"""
+    """Send formatted alert to Teams"""
+    if not WEBHOOK_URL:
+        print("❌ No WEBHOOK_URL found in environment variables.")
+        return
+
     payload = {
         "type": "message",
         "attachments": [
             {
                 "contentType": "application/vnd.microsoft.card.adaptive",
-                "contentUrl": None,
                 "content": {
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
                     "type": "AdaptiveCard",
@@ -41,7 +47,6 @@ def send_teams_alert(message):
             }
         ]
     }
-
     try:
         response = requests.post(WEBHOOK_URL, headers={"Content-Type": "application/json"}, data=json.dumps(payload))
         if response.status_code == 200:
@@ -53,7 +58,7 @@ def send_teams_alert(message):
 
 
 def check_website():
-    """Check if the website is up and return the appropriate message"""
+    """Check if website is live and return status"""
     for attempt in range(MAX_RETRIES):
         try:
             response = requests.get(URL, timeout=15)
@@ -63,20 +68,39 @@ def check_website():
                 return f"⚠️ {URL} returned status {response.status_code}. Please check immediately!"
 
         except (ProxyError, ConnectionError, SSLError, OSError) as e:
-            # Ignore network/proxy errors — only log locally, no Teams alert
+            # ❌ Ignore network/proxy errors (won’t send to Teams)
             print(f"⚠️ Ignored network/proxy error: {e}")
-            return f"⚠️ {URL} could not be checked due to network/proxy issue. Will retry next interval."
+            return None
 
         except Exception as e:
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY)
                 continue
             else:
-                return f"🚨 {URL} is NOT reachable.\nError: {str(e)}"
+                return f"⚠️ Unexpected error while checking {URL}: {str(e)}"
+
+
+def monitor_loop():
+    """Background loop to check site every X minutes"""
+    while True:
+        status_message = check_website()
+        if status_message:  # Only send if not ignored
+            send_teams_alert(status_message)
+        time.sleep(CHECK_INTERVAL)
+
+
+# 🚀 Flask app for Railway
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Website Monitor is running ✅", 200
 
 
 if __name__ == "__main__":
-    while True:
-        status_message = check_website()
-        send_teams_alert(status_message)
-        time.sleep(CHECK_INTERVAL)
+    # Start monitoring in background
+    threading.Thread(target=monitor_loop, daemon=True).start()
+
+    # Railway requires binding to 0.0.0.0:$PORT
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
